@@ -7,15 +7,40 @@ const Category = require('../models/Category');
 const Pincode = require('../models/Pincode');
 
 const connectDB = async () => {
-    const primaryUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/zomitron';
-    const fallbackUri = process.env.MONGO_URI_FALLBACK || 'mongodb://127.0.0.1:27017/zomitron';
+    let uri = process.env.MONGO_URI;
+    const useMemory = (process.env.USE_MEMORY_DB || '').toLowerCase() === 'true';
+    const memoryServerVersion = process.env.MONGOMS_VERSION || '7.0.3'; // >=7.0.3 required on Debian 12 (Render)
+    let memServer;
 
-    const connectWithUri = async (uri, label) => {
-        const conn = await mongoose.connect(uri, {
-            useNewUrlParser: true,
-            useUnifiedTopology: true,
+    const resolveUri = async () => {
+        if (!uri || useMemory) {
+            memServer = await MongoMemoryServer.create({
+                instance: {
+                    dbName: process.env.MONGO_DB_NAME || 'zomitron',
+                    port: process.env.MONGO_MEMORY_PORT ? Number(process.env.MONGO_MEMORY_PORT) : undefined,
+                },
+                binary: {
+                    // Debian 12 images (Render) need MongoDB >=7.0.3; make override configurable
+                    version: memoryServerVersion,
+                },
+            });
+            uri = memServer.getUri();
+            console.log(`🧠 Using in-memory MongoDB at ${uri}`);
+        }
+        return uri;
+    };
+
+    const dbName = process.env.MONGO_DB_NAME || 'zomitron';
+    const connectWithUri = async (label = 'primary') => {
+        const mongoUri = await resolveUri();
+        const conn = await mongoose.connect(mongoUri, {
+            dbName,
+            serverSelectionTimeoutMS: Number(process.env.MONGO_TIMEOUT_MS) || 15000,
+            socketTimeoutMS: Number(process.env.MONGO_SOCKET_TIMEOUT_MS) || 20000,
+            maxPoolSize: Number(process.env.MONGO_MAX_POOL_SIZE) || 20,
+            appName: process.env.MONGO_APP_NAME || 'zomitron-api',
         });
-        console.log(`✅ MongoDB Connected${label ? ` (${label})` : ''}: ${conn.connection.host}`);
+        console.log(`✅ MongoDB Connected (${label}): ${conn.connection.host}/${conn.connection.name}`);
     };
 
     const ensureIndexesAndDefaults = async () => {
@@ -63,65 +88,94 @@ const connectDB = async () => {
 
         console.log('🌱 No products found — seeding demo data in-memory');
 
-        const pincode = await Pincode.create({
-            pincode: '211001', city: 'Prayagraj', district: 'Prayagraj', state: 'Uttar Pradesh',
-            location: { type: 'Point', coordinates: [81.8463, 25.4358] },
-        });
+        try {
+            let pincode = await Pincode.findOne({ pincode: '211001' });
+            if (!pincode) {
+                pincode = await Pincode.create({
+                    pincode: '211001',
+                    city: 'Prayagraj',
+                    district: 'Prayagraj',
+                    state: 'Uttar Pradesh',
+                    lat: 25.4358,
+                    lng: 81.8463,
+                    location: { type: 'Point', coordinates: [81.8463, 25.4358] },
+                });
+            }
 
-        const category = await Category.create({ name: 'Electronics', slug: 'electronics', icon: '📱' });
-        const vendorUser = await User.create({
-            name: 'Demo Vendor', email: 'vendor@demo.com', password: 'vendor123', role: 'vendor', isVerified: true,
-        });
-        const vendor = await Vendor.create({
-            userId: vendorUser._id,
-            storeName: 'Demo Tech Store',
-            address: { line1: 'Civil Lines', city: 'Prayagraj', state: 'Uttar Pradesh', pincode: pincode.pincode },
-            pincode: pincode.pincode,
-            city: 'Prayagraj', state: 'Uttar Pradesh',
-            location: { type: 'Point', coordinates: [81.8463, 25.4358] },
-            approved: true,
-        });
+            let category = await Category.findOne({ slug: 'electronics' });
+            if (!category) {
+                category = await Category.create({ name: 'Electronics', slug: 'electronics', icon: '📱' });
+            }
 
-        await Product.create({
-            vendorId: vendor._id,
-            title: 'Demo Smartphone',
-            slug: `demo-smartphone-${Date.now()}`,
-            description: 'Sample product seeded automatically because the database was empty.',
-            price: 9999,
-            discountPrice: 7999,
-            images: ['https://via.placeholder.com/800x600.png?text=Demo+Phone'],
-            category: category._id,
-            categoryName: 'Electronics',
-            stock: 20,
-            pincode: pincode.pincode,
-            city: 'Prayagraj',
-            state: 'Uttar Pradesh',
-            location: { type: 'Point', coordinates: [81.8463, 25.4358] },
-            isApproved: true,
-            isFeatured: true,
-            tags: ['demo', 'phone'],
-        });
+            let vendorUser = await User.findOne({ email: 'vendor@demo.com' });
+            if (!vendorUser) {
+                vendorUser = await User.create({
+                    name: 'Demo Vendor',
+                    email: 'vendor@demo.com',
+                    password: 'vendor123',
+                    role: 'vendor',
+                    isVerified: true,
+                });
+            }
 
-        console.log('✅ Demo product seeded');
+            let vendor = await Vendor.findOne({ userId: vendorUser._id });
+            if (!vendor) {
+                vendor = await Vendor.create({
+                    userId: vendorUser._id,
+                    storeName: 'Demo Tech Store',
+                    address: { line1: 'Civil Lines', city: 'Prayagraj', state: 'Uttar Pradesh', pincode: pincode.pincode },
+                    pincode: pincode.pincode,
+                    city: 'Prayagraj',
+                    state: 'Uttar Pradesh',
+                    location: { type: 'Point', coordinates: [81.8463, 25.4358] },
+                    approved: true,
+                });
+            }
+
+            const existingProduct = await Product.findOne({ title: 'Demo Smartphone' });
+            if (!existingProduct) {
+                await Product.create({
+                    vendorId: vendor._id,
+                    title: 'Demo Smartphone',
+                    slug: `demo-smartphone-${Date.now()}`,
+                    description: 'Sample product seeded automatically because the database was empty.',
+                    price: 9999,
+                    discountPrice: 7999,
+                    images: ['https://via.placeholder.com/800x600.png?text=Demo+Phone'],
+                    category: category._id,
+                    categoryName: 'Electronics',
+                    stock: 20,
+                    pincode: pincode.pincode,
+                    city: 'Prayagraj',
+                    state: 'Uttar Pradesh',
+                    location: { type: 'Point', coordinates: [81.8463, 25.4358] },
+                    isApproved: true,
+                    isFeatured: true,
+                    tags: ['demo', 'phone'],
+                });
+            }
+
+            console.log('✅ Demo product seeded or already present');
+        } catch (seedErr) {
+            console.warn('⚠️  Demo seed skipped:', seedErr.message);
+        }
     };
 
     try {
-        await connectWithUri(primaryUri, 'primary');
+        await connectWithUri();
         await ensureIndexesAndDefaults();
     } catch (error) {
-        console.error(`❌ MongoDB connection error (primary): ${error.message}`);
-        try {
-            await connectWithUri(fallbackUri, 'fallback');
+        if (!useMemory && (process.env.FALLBACK_MEMORY_DB || '').toLowerCase() === 'true') {
+            console.warn('⚠️  Primary Mongo connection failed, falling back to in-memory MongoDB.');
+            uri = null; // force re-resolve to memory
+            await connectWithUri('memory-fallback');
             await ensureIndexesAndDefaults();
             return;
-        } catch (err) {
-            console.error(`❌ MongoDB connection error (fallback): ${err.message}`);
-            console.log('🚧 Falling back to in-memory MongoDB (mongodb-memory-server)');
-            const mem = await MongoMemoryServer.create({ instance: { dbName: 'zomitron' } });
-            const memUri = mem.getUri();
-            await connectWithUri(memUri, 'in-memory');
-            await ensureIndexesAndDefaults();
         }
+
+        console.error(`❌ MongoDB connection error: ${error.message}`);
+        console.error('Halting startup. Please verify MONGO_URI points to your Atlas cluster and network access is open.');
+        throw error;
     }
 };
 

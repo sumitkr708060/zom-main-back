@@ -7,16 +7,18 @@ const morgan = require('morgan');
 const dotenv = require('dotenv');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
-const { syncDefaultCategories } = require('./utils/syncDefaultCategories');
 
 // Load env
 dotenv.config();
 
 const connectDB = require('./config/db');
 const { initSocket } = require('./config/socket');
+const { syncDefaultCategories } = require('./utils/syncDefaultCategories');
 
 const app = express();
 const server = http.createServer(app);
+const isRender = String(process.env.RENDER || '').toLowerCase() === 'true';
+const appEnv = isRender ? 'production' : (process.env.NODE_ENV || 'development');
 
 // Socket.io setup
 const io = socketIo(server, {
@@ -101,7 +103,7 @@ app.use((err, req, res, next) => {
   res.status(statusCode).json({
     success: false,
     message: err.message || 'Internal Server Error',
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
+    ...(appEnv === 'development' && { stack: err.stack }),
   });
 });
 
@@ -123,7 +125,7 @@ const startServer = () => {
   });
 
   server.listen(PORT, HOST, () => {
-    console.log(`🚀 Zomitron API running on http://${HOST}:${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
+    console.log(`🚀 Zomitron API running on http://${HOST}:${PORT} in ${appEnv} mode`);
   });
 };
 

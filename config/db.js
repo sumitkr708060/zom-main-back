@@ -17,8 +17,9 @@ const getMongoMemoryServer = () => {
 
 const connectDB = async () => {
     let uri = process.env.MONGO_URI;
-    const isProduction = process.env.NODE_ENV === 'production';
-    const allowMemoryInProduction = isEnabled(process.env.ALLOW_MEMORY_DB_IN_PRODUCTION);
+    const isRender = isEnabled(process.env.RENDER);
+    const isProduction = process.env.NODE_ENV === 'production' || isRender;
+    const allowMemoryInProduction = !isRender && isEnabled(process.env.ALLOW_MEMORY_DB_IN_PRODUCTION);
     const canUseMemory = !isProduction || allowMemoryInProduction;
     const requestedMemory = isEnabled(process.env.USE_MEMORY_DB);
     const requestedFallbackMemory = isEnabled(process.env.FALLBACK_MEMORY_DB);
@@ -27,7 +28,9 @@ const connectDB = async () => {
     const memoryServerVersion = process.env.MONGOMS_VERSION || '7.0.3'; // >=7.0.3 required on Debian 12 (Render)
     let memServer;
 
-    if (isProduction && !allowMemoryInProduction && (!uri || requestedMemory || requestedFallbackMemory)) {
+    if (isRender && (requestedMemory || requestedFallbackMemory)) {
+        console.warn('In-memory MongoDB is disabled on Render. Remove USE_MEMORY_DB and FALLBACK_MEMORY_DB from the Render environment.');
+    } else if (isProduction && !allowMemoryInProduction && (!uri || requestedMemory || requestedFallbackMemory)) {
         console.warn('In-memory MongoDB is disabled in production. Set MONGO_URI to Atlas and keep USE_MEMORY_DB/FALLBACK_MEMORY_DB off.');
     }
 

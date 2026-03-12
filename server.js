@@ -18,10 +18,10 @@ const { initSocket } = require('./config/socket');
 const app = express();
 const server = http.createServer(app);
 
-// Socket.io setup
+// Socket.io setup (mirror origin to avoid CORS blocks in production)
 const io = socketIo(server, {
   cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    origin: true, // reflect request origin
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -35,15 +35,21 @@ app.use(helmet({
   contentSecurityPolicy: false,
 }));
 
-// CORS
+// CORS (mirror origin to guarantee header presence for any allowed frontends)
 app.use(cors({
-  origin: [
-    process.env.CLIENT_URL || 'http://localhost:5173',
-    'http://localhost:3000',
-  ],
+  origin: true, // reflect request origin
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 200,
+}));
+// Ensure preflight always succeeds
+app.options('*', cors({
+  origin: true,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 200,
 }));
 
 // Rate Limiting
@@ -84,6 +90,7 @@ app.use('/api/orders', require('./routes/order'));
 app.use('/api/categories', require('./routes/category'));
 app.use('/api/reviews', require('./routes/review'));
 app.use('/api/payments', require('./routes/payment'));
+app.use('/api/taxes', require('./routes/tax'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/pincode', require('./routes/pincode'));
 app.use('/api/notifications', require('./routes/notification'));
